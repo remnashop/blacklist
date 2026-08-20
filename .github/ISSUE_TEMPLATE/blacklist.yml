@@ -1,0 +1,40 @@
+name: 🚫 Заявка на добавление в чёрный список
+description: Сообщить о нарушителе для добавления в чёрный список
+title: "[BAN] "
+labels: ["blacklist"]
+body:
+  - type: input
+    attributes:
+      label: Telegram ID
+      description: Числовой ID нарушителя.
+      placeholder: "123456789"
+    validations:
+      required: true
+
+  - type: dropdown
+    attributes:
+      label: Причина
+      options:
+        - Шаринг подписки
+        - Накрутка рефералов
+        - Абуз триалки
+        - Скам / мошенничество
+        - Слив ключей
+        - Другое
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Детали нарушения
+      description: Опишите, что произошло.
+      placeholder: "Что случилось..."
+    validations:
+      required: true
+
+  - type: textarea
+    attributes:
+      label: Доказательства
+      description: Прикрепите переписку, скриншоты, логи. Без доказательств заявка не рассматривается.
+    validations:
+      required: true
