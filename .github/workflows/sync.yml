@@ -1,0 +1,44 @@
+name: Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Разовый источник (пусто — все из scripts/sources.txt)
+        required: false
+  schedule:
+    - cron: "0 5 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Merge missing ids
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          for url in ${URL:-$(grep -E '^https?://' scripts/sources.txt)}; do
+            python3 scripts/add_ban.py --sync "$url"
+          done
+          python3 scripts/add_ban.py --check
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git diff --quiet && { echo "nothing to sync"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B sync/upstream
+          git commit -am "Sync ids from upstream blacklists"
+          git push -f origin sync/upstream
+          gh pr create --base main --head sync/upstream \
+            --title "Sync ids from upstream blacklists" \
+            --body "Автоматический прогон \`add_ban.py --sync\`. Проверьте причины перед мержем." \
+            || echo "PR already open"
