@@ -1,0 +1,2 @@
+# Внешние списки, с которыми сверяется blacklist.txt. По одной raw-ссылке на строку.
+https://raw.githubusercontent.com/Blin4ickUSE/ban-vpn/main/blacklist.txt
