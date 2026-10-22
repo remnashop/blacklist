@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Insert an ID into blacklist.txt at its sorted position (ascending)."""
+"""Insert a Telegram ID or email into blacklist.txt at its sorted position."""
 
 import bisect
 import re
@@ -9,32 +9,48 @@ from itertools import pairwise
 from pathlib import Path
 
 BLACKLIST = Path(__file__).resolve().parent.parent / "blacklist.txt"
+EMAIL_RE = re.compile(r"[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+")
 
 
-def add_entry(lines: list[str], user_id: int, reason: str) -> list[str]:
+def entry_key(value: str) -> tuple[int, int | str]:
+    """Sort key: Telegram IDs ascending first, then emails alphabetically."""
+    value = value.strip().lower()
+    if value.isascii() and value.isdigit():
+        return (0, int(value))
+    if EMAIL_RE.fullmatch(value):
+        return (1, value)
+    raise ValueError(f"not a Telegram ID or email: {value!r}")
+
+
+def line_key(line: str) -> tuple[int, int | str]:
+    return entry_key(line.split("#", 1)[0])
+
+
+def add_entry(lines: list[str], entry: str, reason: str) -> list[str]:
     header = [l for l in lines if l.lstrip().startswith("#")]
     entries = [l for l in lines if not l.lstrip().startswith("#")]
 
-    ids = [int(l.split("#", 1)[0].strip()) for l in entries]
-    if user_id in ids:
-        raise ValueError(f"{user_id} is already in the list")
+    key = entry_key(entry)
+    keys = [line_key(l) for l in entries]
+    if key in keys:
+        raise ValueError(f"{key[1]} is already in the list")
 
-    pos = bisect.bisect_left(ids, user_id)
-    new_line = f"{user_id} # {reason}\n" if reason else f"{user_id}\n"
+    pos = bisect.bisect_left(keys, key)
+    new_line = f"{key[1]} # {reason}\n" if reason else f"{key[1]}\n"
     entries.insert(pos, new_line)
     return header + entries
 
 
 def check_order(lines: list[str]) -> int:
-    """Print out-of-order and duplicate IDs. Returns an exit code."""
+    """Print out-of-order and duplicate entries. Returns an exit code."""
     entries = [l for l in lines if not l.lstrip().startswith("#")]
-    ids = [int(l.split("#", 1)[0].strip()) for l in entries]
+    keys = [line_key(l) for l in entries]
 
-    disorder = [(a, b) for a, b in pairwise(ids) if a > b]
-    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    disorder = [(a[1], b[1]) for a, b in pairwise(keys) if a > b]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
 
     if not disorder and not dupes:
-        print(f"ok: {len(ids)} ids, sorted, no duplicates")
+        print(f"ok: {len(keys)} entries, sorted, no duplicates")
         return 0
 
     if disorder:
@@ -43,8 +59,8 @@ def check_order(lines: list[str]) -> int:
             print(f"  {a} -> {b}")
     if dupes:
         print(f"duplicates: {len(dupes)}")
-        for i in dupes:
-            print(f"  {i}")
+        for k in dupes:
+            print(f"  {k[1]}")
     return 1
 
 
@@ -53,33 +69,35 @@ def strip_mentions(reason: str) -> str:
     return re.sub(r"\s+", " ", reason).strip()
 
 
-def parse_list(text: str) -> dict[int, str]:
-    """Parse an id-per-line list (`id` or `id # reason`) into {id: reason}."""
+def parse_list(text: str) -> dict[tuple[int, int | str], str]:
+    """Parse an entry-per-line list (`entry` or `entry # reason`) into {key: reason}."""
     result = {}
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        idpart, _, reason = line.partition("#")
+        value, _, reason = line.partition("#")
         try:
-            uid = int(idpart.strip())
+            key = entry_key(value)
         except ValueError:
             continue
-        result[uid] = strip_mentions(reason.strip())
+        result[key] = strip_mentions(reason.strip())
     return result
 
 
-def merge_missing(lines: list[str], other: dict[int, str]) -> tuple[list[str], int]:
-    """Append ids from `other` missing in `lines`, keep the file sorted."""
+def merge_missing(
+    lines: list[str], other: dict[tuple[int, int | str], str]
+) -> tuple[list[str], int]:
+    """Append entries from `other` missing in `lines`, keep the file sorted."""
     header = [l for l in lines if l.lstrip().startswith("#")]
     entries = [l for l in lines if not l.lstrip().startswith("#")]
-    ids = {int(l.split("#", 1)[0].strip()) for l in entries}
+    keys = {line_key(l) for l in entries}
 
-    missing = {uid: reason for uid, reason in other.items() if uid not in ids}
-    for uid, reason in missing.items():
-        entries.append(f"{uid} # {reason}\n" if reason else f"{uid}\n")
+    missing = {key: reason for key, reason in other.items() if key not in keys}
+    for key, reason in missing.items():
+        entries.append(f"{key[1]} # {reason}\n" if reason else f"{key[1]}\n")
 
-    entries.sort(key=lambda l: int(l.split("#", 1)[0].strip()))
+    entries.sort(key=line_key)
     return header + entries, len(missing)
 
 
@@ -91,31 +109,49 @@ def sync(url: str) -> None:
     lines = BLACKLIST.read_text(encoding="utf-8").splitlines(keepends=True)
     lines, added = merge_missing(lines, other)
     BLACKLIST.write_text("".join(lines), encoding="utf-8")
-    print(f"added {added} ids from {len(other)} in source")
+    print(f"added {added} entries from {len(other)} in source")
 
 
 def selftest() -> None:
     lines = ["# header\n", "1 # a\n", "5 # b\n", "10 # c\n"]
-    result = add_entry(lines, 7, "test")
+    result = add_entry(lines, "7", "test")
     assert result == ["# header\n", "1 # a\n", "5 # b\n", "7 # test\n", "10 # c\n"], (
         result
     )
+    for dup in ("5", "a@x.io"):
+        try:
+            add_entry(lines + ["a@x.io\n"], dup, "dup")
+            assert False, "duplicate was not caught"
+        except ValueError:
+            pass
+
+    result = add_entry(["2\n", "b@x.io\n"], "A@x.io", "")
+    assert result == ["2\n", "a@x.io\n", "b@x.io\n"], result
+    assert add_entry(["b@x.io\n"], "3", "") == ["3\n", "b@x.io\n"]
     try:
-        add_entry(lines, 5, "dup")
-        assert False, "duplicate was not caught"
+        add_entry([], "not-an-entry", "")
+        assert False, "garbage was not rejected"
     except ValueError:
         pass
 
     assert check_order(["1\n", "2\n", "3\n"]) == 0
     assert check_order(["2\n", "1\n"]) == 1
     assert check_order(["1\n", "1\n"]) == 1
+    assert check_order(["9\n", "a@x.io\n", "b@x.io\n"]) == 0
+    assert check_order(["a@x.io\n", "9\n"]) == 1
 
     assert strip_mentions("@user hello") == "hello"
-    assert parse_list("# h\n1 # @user a\n2\n") == {1: "a", 2: ""}
+    assert parse_list("# h\n1 # @user a\n2\nE@x.io # e\n") == {
+        (0, 1): "a",
+        (0, 2): "",
+        (1, "e@x.io"): "e",
+    }
 
-    merged, added = merge_missing(["# h\n", "1 # a\n", "5 # b\n"], {1: "x", 3: "c"})
-    assert added == 1
-    assert merged == ["# h\n", "1 # a\n", "3 # c\n", "5 # b\n"], merged
+    merged, added = merge_missing(
+        ["# h\n", "1 # a\n", "5 # b\n"], {(0, 1): "x", (0, 3): "c", (1, "e@x.io"): ""}
+    )
+    assert added == 2
+    assert merged == ["# h\n", "1 # a\n", "3 # c\n", "5 # b\n", "e@x.io\n"], merged
 
     print("selftest ok")
 
@@ -133,20 +169,20 @@ def main() -> None:
         sync(sys.argv[2])
         return
 
-    if len(sys.argv) < 2 or not sys.argv[1].isdigit():
-        sys.exit("Usage: add_ban.py <telegram_id> [reason] | --check | --sync <url>")
+    if len(sys.argv) < 2 or sys.argv[1].startswith("--"):
+        sys.exit("Usage: add_ban.py <telegram_id|email> [reason] | --check | --sync <url>")
 
-    user_id = int(sys.argv[1])
+    entry = sys.argv[1]
     reason = " ".join(sys.argv[2:])
 
     lines = BLACKLIST.read_text(encoding="utf-8").splitlines(keepends=True)
     try:
-        lines = add_entry(lines, user_id, reason)
+        lines = add_entry(lines, entry, reason)
     except ValueError as e:
         sys.exit(str(e))
 
     BLACKLIST.write_text("".join(lines), encoding="utf-8")
-    print(f"Added: {user_id} # {reason}")
+    print(f"Added: {entry_key(entry)[1]} # {reason}")
 
 
 if __name__ == "__main__":

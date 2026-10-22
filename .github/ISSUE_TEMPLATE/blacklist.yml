@@ -5,9 +5,9 @@ labels: ["blacklist"]
 body:
   - type: input
     attributes:
-      label: Telegram ID
-      description: Числовой ID нарушителя.
-      placeholder: "123456789"
+      label: Telegram ID или email
+      description: Числовой Telegram ID нарушителя или его email.
+      placeholder: "123456789 или user@example.com"
     validations:
       required: true
 
